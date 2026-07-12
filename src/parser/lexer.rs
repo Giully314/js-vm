@@ -1,9 +1,7 @@
 use std::{iter::Peekable, str::Chars, iter::Iterator, fmt::Display};
 
-use crate::errors::{Error, Result};
-
 #[derive(PartialEq, Debug)]
-enum Token {
+pub enum Token {
     Keyword(Keyword),
     Identifier(String),
     Number(String),
@@ -35,6 +33,9 @@ enum Token {
     Slash,                  // /
     Star,                   // *
     Percent,                // %
+
+    Eof,
+    Error(String),
 }
 
 impl Display for Token {
@@ -68,12 +69,14 @@ impl Display for Token {
             Self::Slash => "/" ,
             Self::Star => "*" ,
             Self::Percent => "%" ,
+            Self::Eof => "eof" ,
+            Self::Error(s) => s,
         })
     }
 }
 
 #[derive(PartialEq, Debug)]
-enum Keyword {
+pub enum Keyword {
     Await,
     Break,
     Case,
@@ -155,94 +158,96 @@ impl Display for Keyword {
     }
 }
 
-struct Lexer<'a> {
+pub struct Lexer<'a> {
     text: Peekable<Chars<'a>>,
 }
 
 impl Iterator for Lexer<'_> {   
-    type Item = Result<Token>;
+    type Item = Token;
 
     fn next(&mut self) -> Option<Self::Item> {
         match self.scan() {
-            Ok(Some(token)) => Some(Ok(token)),
-            Ok(None) => self.text.peek().map(|c| Err(Error::InvalidInput(format!("unexpected char {c}")))),
-            Err(err) => Some(Err(err))
+            Token::Eof => None,
+            token => Some(token),
         }
     }
 }
 
 
 impl<'a> Lexer<'a> {
-    fn new(text: &'a str) -> Self {
+    pub fn new(text: &'a str) -> Self {
         return Lexer { text: text.chars().peekable() };
     }
 
-    pub fn scan(&mut self) -> Result<Option<Token>> {
+    pub fn scan(&mut self) -> Token {
         self.skip_whitespaces();
 
         let Some(c) = self.text.peek() else {
-            return Ok(None);
+            return Token::Eof;
         };
 
         match c {
-            '0'..'9' => Ok(self.number()),
+            '0'..'9' => self.number(),
             'a'..'z' | 'A'..'Z' => {
-                return Ok(self.keyword_or_identifier());
+                return self.keyword_or_identifier();
             },
-            '"' => Ok(self.string()),
+            '"' => self.string(),
             _ => self.symbol()
         }
     }
 
-    fn symbol(&mut self) -> Result<Option<Token>> {
-        let c =  self.text.next().unwrap();
+    fn symbol(&mut self) -> Token {
+        let Some(c) =  self.text.next() else {
+            return Token::Eof;
+        };
+
         match c {
-            '.' => Ok(Some(Token::Dot)),
-            ',' => Ok(Some(Token::Comma)),
-            ';' => Ok(Some(Token::Semicolon)),
-            '('=> Ok(Some(Token::OpenParen)),
-            ')'=> Ok(Some(Token::CloseParen)),
-            '['=> Ok(Some(Token::OpenSquare)),
-            ']'=> Ok(Some(Token::CloseSquare)),
-            '{'=> Ok(Some(Token::OpenBracket)),
-            '}'=> Ok(Some(Token::CloseBracket)),
+            '.' => Token::Dot,
+            ',' => Token::Comma,
+            ';' => Token::Semicolon,
+            '('=> Token::OpenParen,
+            ')'=> Token::CloseParen,
+            '['=> Token::OpenSquare,
+            ']'=> Token::CloseSquare,
+            '{'=> Token::OpenBracket,
+            '}'=> Token::CloseBracket,
             '=' => {
                 self.text.next();
                 if self.match_char('=') {
                     if self.match_char('=') {
-                        return Ok(Some(Token::StrictEquality));
+                        return Token::StrictEquality;
                     }
-                    return Ok(Some(Token::Equality));
+                    return Token::Equality;
                 }
-                return Ok(Some(Token::Equal));
+                return Token::Equal;
             }
             '!' => {
                 if self.match_char('=') {
                     if self.match_char('=') {
-                        return Ok(Some(Token::StrictInequality));
+                        return Token::StrictInequality;
                     } 
-                    return Ok(Some(Token::Inequality));
+                    return Token::Inequality;
                 }
-                return Ok(Some(Token::Bang)); 
+                return Token::Bang; 
             } 
             '>' => {
                 if self.match_char('=') {
-                    return Ok(Some(Token::GreaterThanOrEqual));
+                    return Token::GreaterThanOrEqual;
                 }
-                return Ok(Some(Token::GreaterThan));
+                return Token::GreaterThan;
             }
             '<' => {
                 if self.match_char('=') {
-                    return Ok(Some(Token::LessThanOrEqual));
+                    return Token::LessThanOrEqual;
                 }
-                return Ok(Some(Token::LessThan));
+                return Token::LessThan;
             },
-            '+' => Ok(Some(Token::Plus)),
-            '-' => Ok(Some(Token::Minus)),
-            '/' => Ok(Some(Token::Slash)), // TODO: Add comment skippin.
-            '*' => Ok(Some(Token::Star)),
-            '%' => Ok(Some(Token::Percent)),
-            _ => Err(Error::InvalidInput(c.to_string())),
+            '+' => Token::Plus,
+            '-' => Token::Minus,
+            '/' => Token::Slash, // TODO: Add comment skippin.
+            '*' => Token::Star,
+            '%' => Token::Percent,
+            _ => Token::Error(format!("Invalid character {c}")),
         }
     }
 
@@ -262,7 +267,7 @@ impl<'a> Lexer<'a> {
         while self.next_if(|c| c.is_whitespace()).is_some() {}
     }
 
-    fn number(&mut self) -> Option<Token> {
+    fn number(&mut self) -> Token {
         // TODO: Check for malforming numbers (mix of numbers and alpha).
         let mut n = String::new();
         while let Some(c) = self.next_if(|c| c.is_numeric()) {
@@ -277,20 +282,20 @@ impl<'a> Lexer<'a> {
             }
         }
 
-        return Some(Token::Number(n))
+        return Token::Number(n)
     }
 
-    fn string(&mut self) -> Option<Token> {
+    fn string(&mut self) -> Token {
         self.text.next();
         let mut s = String::new();
         while let Some(c) = self.next_if(|c| c != '"') {
             s.push(c);
         }
         self.text.next();
-        return Some(Token::String(s));
+        return Token::String(s);
     }
 
-    fn keyword_or_identifier(&mut self) -> Option<Token> {
+    fn keyword_or_identifier(&mut self) -> Token {
         // This is not optimal, i know. Best way is to just take a &str as a text and indexing 
         // directly for the trie. 
         let mut s = String::new();
@@ -299,43 +304,43 @@ impl<'a> Lexer<'a> {
         }
 
         match s.as_str() {
-            "await" => Some(Token::Keyword(Keyword::Await)),
-            "break" => Some(Token::Keyword(Keyword::Break)),
-            "case" => Some(Token::Keyword(Keyword::Case)),
-            "catch" => Some(Token::Keyword(Keyword::Catch)),
-            "class" => Some(Token::Keyword(Keyword::Class)),
-            "const" => Some(Token::Keyword(Keyword::Const)),
-            "continue" => Some(Token::Keyword(Keyword::Continue)),
-            "debugger" => Some(Token::Keyword(Keyword::Debugger)),
-            "default" => Some(Token::Keyword(Keyword::Default)),
-            "delete" => Some(Token::Keyword(Keyword::Delete)),
-            "do" => Some(Token::Keyword(Keyword::Do)),
-            "else" => Some(Token::Keyword(Keyword::Else)),
-            "export" => Some(Token::Keyword(Keyword::Export)),
-            "extends" => Some(Token::Keyword(Keyword::Extends)),
-            "false" => Some(Token::Keyword(Keyword::False)),
-            "finally" => Some(Token::Keyword(Keyword::Finally)),
-            "for" => Some(Token::Keyword(Keyword::For)),
-            "function" => Some(Token::Keyword(Keyword::Function)),
-            "if" => Some(Token::Keyword(Keyword::If)),
-            "import" => Some(Token::Keyword(Keyword::Import)),
-            "in" => Some(Token::Keyword(Keyword::In)),
-            "instanceof" => Some(Token::Keyword(Keyword::Instanceof)),
-            "new" => Some(Token::Keyword(Keyword::New)),
-            "null" => Some(Token::Keyword(Keyword::Null)),
-            "return" => Some(Token::Keyword(Keyword::Return)),
-            "super" => Some(Token::Keyword(Keyword::Super)),
-            "switch" => Some(Token::Keyword(Keyword::Switch)),
-            "this" => Some(Token::Keyword(Keyword::This)),
-            "throw" => Some(Token::Keyword(Keyword::Throw)),
-            "true" => Some(Token::Keyword(Keyword::True)),
-            "try" => Some(Token::Keyword(Keyword::Try)),
-            "typeof" => Some(Token::Keyword(Keyword::Typeof)),
-            "var" => Some(Token::Keyword(Keyword::Var)),
-            "void" => Some(Token::Keyword(Keyword::Void)),
-            "while" => Some(Token::Keyword(Keyword::While)),
-            "with" => Some(Token::Keyword(Keyword::With)),
-            _ => Some(Token::Identifier(s))
+            "await" => Token::Keyword(Keyword::Await),
+            "break" => Token::Keyword(Keyword::Break),
+            "case" => Token::Keyword(Keyword::Case),
+            "catch" => Token::Keyword(Keyword::Catch),
+            "class" => Token::Keyword(Keyword::Class),
+            "const" => Token::Keyword(Keyword::Const),
+            "continue" => Token::Keyword(Keyword::Continue),
+            "debugger" => Token::Keyword(Keyword::Debugger),
+            "default" => Token::Keyword(Keyword::Default),
+            "delete" => Token::Keyword(Keyword::Delete),
+            "do" => Token::Keyword(Keyword::Do),
+            "else" => Token::Keyword(Keyword::Else),
+            "export" => Token::Keyword(Keyword::Export),
+            "extends" => Token::Keyword(Keyword::Extends),
+            "false" => Token::Keyword(Keyword::False),
+            "finally" => Token::Keyword(Keyword::Finally),
+            "for" => Token::Keyword(Keyword::For),
+            "function" => Token::Keyword(Keyword::Function),
+            "if" => Token::Keyword(Keyword::If),
+            "import" => Token::Keyword(Keyword::Import),
+            "in" => Token::Keyword(Keyword::In),
+            "instanceof" => Token::Keyword(Keyword::Instanceof),
+            "new" => Token::Keyword(Keyword::New),
+            "null" => Token::Keyword(Keyword::Null),
+            "return" => Token::Keyword(Keyword::Return),
+            "super" => Token::Keyword(Keyword::Super),
+            "switch" => Token::Keyword(Keyword::Switch),
+            "this" => Token::Keyword(Keyword::This),
+            "throw" => Token::Keyword(Keyword::Throw),
+            "true" => Token::Keyword(Keyword::True),
+            "try" => Token::Keyword(Keyword::Try),
+            "typeof" => Token::Keyword(Keyword::Typeof),
+            "var" => Token::Keyword(Keyword::Var),
+            "void" => Token::Keyword(Keyword::Void),
+            "while" => Token::Keyword(Keyword::While),
+            "with" => Token::Keyword(Keyword::With),
+            _ => Token::Identifier(s)
         }
     }
 
@@ -350,6 +355,6 @@ mod tests {
     #[test]
     fn lexes_numbers() {
         let mut lexer = Lexer::new("42");
-        assert_eq!(lexer.next(), Some(Ok(Token::Number("42".to_string()))));
+        assert_eq!(lexer.next(), Some(Token::Number("42".to_string())));
     }
 }
